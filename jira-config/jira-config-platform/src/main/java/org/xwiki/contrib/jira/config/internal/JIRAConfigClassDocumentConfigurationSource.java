@@ -38,11 +38,17 @@ import org.xwiki.contrib.jira.config.JIRAServer;
 import org.xwiki.contrib.jira.config.JIRAAuthenticatorFactory;
 import org.xwiki.model.reference.DocumentReference;
 import org.xwiki.model.reference.LocalDocumentReference;
+import org.xwiki.model.reference.RegexEntityReference;
+import org.xwiki.observation.event.Event;
 
 import com.xpn.xwiki.XWikiContext;
 import com.xpn.xwiki.XWikiException;
 import com.xpn.xwiki.doc.XWikiDocument;
+import com.xpn.xwiki.internal.event.XObjectAddedEvent;
+import com.xpn.xwiki.internal.event.XObjectDeletedEvent;
+import com.xpn.xwiki.internal.event.XObjectUpdatedEvent;
 import com.xpn.xwiki.objects.BaseObject;
+import com.xpn.xwiki.objects.BaseObjectReference;
 import com.xpn.xwiki.objects.BaseProperty;
 import com.xpn.xwiki.objects.StringProperty;
 
@@ -102,6 +108,21 @@ public class JIRAConfigClassDocumentConfigurationSource extends AbstractDocument
     }
 
     @Override
+    protected List<Event> getCacheCleanupEvents()
+    {
+        // The cached servers hold their authenticator, built from the basic auth configuration, which is saved in
+        // another document: the cache must also be cleaned when it changes, otherwise the old credentials are used.
+        List<Event> events = new ArrayList<>(super.getCacheCleanupEvents());
+        RegexEntityReference basicAuthMatcher = BaseObjectReference.any(
+            this.referenceSerializer.serialize(BasicAuthJIRAAuthenticatorFactory.BASIC_AUTH_DATA_CLASS_REFERENCE));
+        events.add(new XObjectAddedEvent(basicAuthMatcher));
+        events.add(new XObjectDeletedEvent(basicAuthMatcher));
+        events.add(new XObjectUpdatedEvent(basicAuthMatcher));
+
+        return events;
+    }
+
+    @Override
     protected Object getBaseProperty(String propertyName, boolean text) throws XWikiException
     {
         // Only handle the "serverMappings" property and when we get asked for it, we get all XObjects in the document
@@ -118,8 +139,9 @@ public class JIRAConfigClassDocumentConfigurationSource extends AbstractDocument
             StringProperty urlProperty = (StringProperty) baseObject.getField("url");
             if (!isPropertyEmpty(idProperty) && !isPropertyEmpty(urlProperty)) {
                 String authType = baseObject.getStringValue("authenticationType");
+                String instanceType = baseObject.getStringValue("instanceType");
 
-                jiraServer = getJiraServer(authType, urlProperty, idProperty);
+                jiraServer = getJiraServer(authType, instanceType, urlProperty, idProperty);
                 if (jiraServer == null) {
                     continue;
                 }
@@ -132,13 +154,14 @@ public class JIRAConfigClassDocumentConfigurationSource extends AbstractDocument
         return jiraServers;
     }
 
-    private JIRAServer getJiraServer(String authType, StringProperty urlProperty, StringProperty idProperty)
+    private JIRAServer getJiraServer(String authType, String instanceType, StringProperty urlProperty,
+        StringProperty idProperty)
     {
         ComponentManager componentManager = componentManagerProvider.get();
 
         JIRAServer jiraServer = null;
         if (StringUtils.isEmpty(authType) || "noAuth".equals(authType)) {
-            jiraServer = new JIRAServer(urlProperty.getValue(), idProperty.getValue());
+            jiraServer = new JIRAServer(urlProperty.getValue(), idProperty.getValue(), null, instanceType);
         } else {
             if (!componentManager.hasComponent(JIRAAuthenticatorFactory.class, authType)) {
                 logger.error("Can't find JIRAuthenticatorFactory with name [{}]", authType);
@@ -147,7 +170,7 @@ public class JIRAConfigClassDocumentConfigurationSource extends AbstractDocument
                     JIRAAuthenticatorFactory jiraAuthenticatorFactory = componentManagerProvider.get()
                         .getInstance(JIRAAuthenticatorFactory.class, authType);
                     jiraServer = new JIRAServer(urlProperty.getValue(), idProperty.getValue(),
-                        jiraAuthenticatorFactory.get(idProperty.getValue()));
+                        jiraAuthenticatorFactory.get(idProperty.getValue()), instanceType);
                 } catch (ComponentLookupException e) {
                     logger.error("Can't create JIRAuthenticatorFactory for authentication type [{}]", authType,
                         e);

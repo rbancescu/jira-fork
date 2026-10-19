@@ -25,11 +25,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.commons.lang3.StringUtils;
 import org.jdom2.Element;
 import org.xwiki.contrib.jira.macro.JIRAField;
 import org.xwiki.contrib.jira.macro.JIRAMacroParameters;
 import org.xwiki.rendering.block.Block;
 import org.xwiki.rendering.block.ImageBlock;
+import org.xwiki.rendering.block.VerbatimBlock;
 import org.xwiki.rendering.listener.reference.ResourceReference;
 import org.xwiki.rendering.listener.reference.ResourceType;
 import org.xwiki.contrib.jira.macro.JIRAFieldDisplayer;
@@ -49,7 +51,10 @@ public abstract class AbstractImageJIRAFieldDisplayer implements JIRAFieldDispla
         Element fieldElement = getElement(issue);
         if (fieldElement != null) {
             String iconURL = getURL(issue);
-            if (iconURL != null) {
+            if (StringUtils.isEmpty(iconURL)) {
+                // Some values have no icon (e.g. the statuses of the recent JIRA Cloud workflows): display their name.
+                result = Arrays.asList(new VerbatimBlock(fieldElement.getText(), true));
+            } else {
                 ResourceReference reference = new ResourceReference(iconURL, ResourceType.URL);
                 Map<String, String> resourceParameters = new HashMap<>();
                 resourceParameters.put("alt", fieldElement.getText());
